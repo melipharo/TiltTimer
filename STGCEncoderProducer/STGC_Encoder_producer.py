@@ -29,32 +29,34 @@ class UserParameters:
         self.defaults = {
             "disk_diameter": "30 mm",
             "disk_thickness": "2 mm",
-            "disk_center_to_slot": "10 mm",
             "disk_axis_diameter": "3 mm",
             "head_width": "3.4 mm",
             "head_height": "2.8 mm",
-            "head_to_disk_edge": "1 mm"
+            "head_to_disk_gap": "1 mm",
+            "ports_disk_to_slots_gap": "2 mm",
         }
 
         self.design = design
 
         self.disk_diameter = self._get_value_from_design("disk_diameter")
         self.disk_thickness = self._get_value_from_design("disk_thickness")
-        self.disk_center_to_slot = self._get_value_from_design("disk_center_to_slot")
         self.disk_axis_diameter = self._get_value_from_design("disk_axis_diameter")
         self.head_width = self._get_value_from_design("head_width")
         self.head_height = self._get_value_from_design("head_height")
-        self.head_to_disk_edge = self._get_value_from_design("head_to_disk_edge")
+        self.head_to_disk_gap = self._get_value_from_design("head_to_disk_gap")
+        self.ports_disk_to_slots_gap = self._get_value_from_design("ports_disk_to_slots_gap")
 
-        self.disk_radius = self.disk_diameter / 2
-
-        # TODO these variables are not in Fusion document
+        # TODO these variables are not in Fusion document for now
         self.bits_pattern_string = '000000000000111000000110000001111111111111000111111001111110'
         self.heads_distance_bits = 5
         self.heads_count = 5
-
         self.bits_pattern = list(map(int, self.bits_pattern_string))
+        self.bit_length_angle = (2 * math.pi) / len(self.bits_pattern)
         assert sorted(set(self.bits_pattern)) == [0, 1], 'Pattern contains wrong characters'
+
+        self.disk_outer_radius = self.disk_diameter / 2
+        self.disk_inner_radius = self.disk_outer_radius - self.head_height - self.head_to_disk_gap * 2
+        self.heads_distance_angle = (self.heads_distance_bits * 2 * math.pi) / len(self.bits_pattern)
 
 
 def ra2xy(center, radius, angle):
@@ -65,7 +67,7 @@ def ra2xy(center, radius, angle):
                 )
 
 
-def produce_slots(root, plane, user_params):
+def produce_slots(root, plane, user_params: UserParameters):
     # slots = [(value, bit_length),]
     def get_slots(pattern):
         bits_count = len(pattern)
@@ -98,29 +100,37 @@ def produce_slots(root, plane, user_params):
     slots_sketch.name = "slots"
     sketch_center_point = slots_sketch.modelToSketchSpace(plane.geometry.origin)
 
+    # axis hole
+    slots_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point, user_params.disk_axis_diameter / 2)
+
+    # solid center
+    slots_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point, user_params.disk_inner_radius)
+
     # slots
     slots = get_slots(user_params.bits_pattern)
     start_angle = 0
     for slot in slots:
-        arc_length = (slot[1] * 2 * math.pi) / len(user_params.bits_pattern)
+        arc_length = slot[1] * user_params.bit_length_angle
         if slot[0] == 1:
-            ark_start_point = ra2xy(sketch_center_point, user_params.disk_radius, start_angle)
-            ark_end_point = ra2xy(sketch_center_point, user_params.disk_radius, start_angle + arc_length)
-            slots_sketch.sketchCurves.sketchLines.addByTwoPoints(sketch_center_point, ark_start_point)
-            slots_sketch.sketchCurves.sketchLines.addByTwoPoints(sketch_center_point, ark_end_point)
+            ark_start_point = ra2xy(sketch_center_point, user_params.disk_outer_radius, start_angle)
+            ark_end_point = ra2xy(sketch_center_point, user_params.disk_outer_radius, start_angle + arc_length)
+            # slot ark
             slots_sketch.sketchCurves.sketchArcs.addByCenterStartSweep(sketch_center_point, ark_start_point, arc_length)
+            # slot sides
+            side_cw_start_point = ra2xy(sketch_center_point, user_params.disk_inner_radius, start_angle)
+            side_ccw_start_point = ra2xy(sketch_center_point, user_params.disk_inner_radius, start_angle + arc_length)
+            slots_sketch.sketchCurves.sketchLines.addByTwoPoints(side_cw_start_point, ark_start_point)
+            slots_sketch.sketchCurves.sketchLines.addByTwoPoints(side_ccw_start_point, ark_end_point)
         start_angle += arc_length
-
-    # solid center
-    slots_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point, user_params.disk_center_to_slot)
 
     sketch_profiles = adsk.core.ObjectCollection.create()
     for profile in slots_sketch.profiles:
         sketch_profiles.add(profile)
+    sketch_profiles.removeByIndex(0)  # remove axis hole (the ugly-way)
     distance = adsk.core.ValueInput.createByReal(user_params.disk_thickness)
     extrude1 = extrudes.addSimple(sketch_profiles, distance, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
-    body1 = extrude1.bodies.item(0)
-    body1.name = "slots"
+    slots_body = extrude1.bodies.item(0)
+    slots_body.name = "slots"
 
     #
     # # Get the state of the extrusion
@@ -134,26 +144,44 @@ def produce_slots(root, plane, user_params):
     # health = timelineObj.healthState
     # message = timelineObj.errorOrWarningMessage
 
-    # axis hole
-    # TODO
-    # slots_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point, user_params.disk_axis_diameter / 2)
 
-
-def produce_heads(root, plane, user_params):
+def produce_ports(root, plane, user_params: UserParameters):
     sketches = root.sketches
     extrudes = root.features.extrudeFeatures
-    heads_sketch = sketches.add(plane)
-    heads_sketch.name = "heads"
-    sketch_center_point = heads_sketch.modelToSketchSpace(plane.geometry.origin)
+    ports_sketch = sketches.add(plane)
+    ports_sketch.name = "ports"
+    sketch_center_point = ports_sketch.modelToSketchSpace(plane.geometry.origin)
 
-    heads_distance_angle = (user_params.heads_distance_bits * 2 * math.pi) / len(user_params.bits_pattern)
+    # main solid
+    ports_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point,
+                                                              user_params.disk_outer_radius + user_params.ports_disk_to_slots_gap / 2)
+
+    # axis hole
+    ports_sketch.sketchCurves.sketchCircles.addByCenterRadius(sketch_center_point, user_params.disk_axis_diameter / 2)
+
     start_angle = 0
     for head in range(user_params.heads_count):
-        heads_sketch.sketchCurves.sketchCircles.addByCenterRadius(
-            ra2xy(sketch_center_point, user_params.disk_radius - user_params.head_to_disk_edge, start_angle),
-            user_params.head_height
-        )
-        start_angle += heads_distance_angle
+        # anchor point
+        point_cw_far = ra2xy(sketch_center_point, user_params.disk_outer_radius - user_params.head_to_disk_gap,
+                             start_angle)
+        point_cw_near = ra2xy(sketch_center_point, user_params.disk_inner_radius + user_params.head_to_disk_gap,
+                              start_angle)
+        point_ccw_far = ra2xy(sketch_center_point, user_params.disk_outer_radius - user_params.head_to_disk_gap,
+                              start_angle + user_params.bit_length_angle)
+        point_ccw_near = ra2xy(sketch_center_point, user_params.disk_inner_radius + user_params.head_to_disk_gap,
+                               start_angle + user_params.bit_length_angle)
+
+        ports_sketch.sketchCurves.sketchLines.addByTwoPoints(point_cw_near, point_cw_far)
+        ports_sketch.sketchCurves.sketchLines.addByTwoPoints(point_cw_far, point_ccw_far)
+        ports_sketch.sketchCurves.sketchLines.addByTwoPoints(point_ccw_far, point_ccw_near)
+        ports_sketch.sketchCurves.sketchLines.addByTwoPoints(point_ccw_near, point_cw_near)
+        start_angle += user_params.heads_distance_angle
+
+    profile = ports_sketch.profiles[0]
+    distance = adsk.core.ValueInput.createByReal(-user_params.disk_thickness)
+    extrude1 = extrudes.addSimple(profile, distance, adsk.fusion.FeatureOperations.NewBodyFeatureOperation)
+    ports_body = extrude1.bodies.item(0)
+    ports_body.name = "ports"
 
 
 def run(context):
@@ -177,7 +205,7 @@ def run(context):
         plane_xy = root.xYConstructionPlane
 
         produce_slots(root, plane_xy, user_params)
-        produce_heads(root, plane_xy, user_params)
+        produce_ports(root, plane_xy, user_params)
 
     except:
         if ui:
