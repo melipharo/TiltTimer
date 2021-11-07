@@ -197,15 +197,17 @@ def run(context):
             return
 
         user_params = UserParameters(design)
-        root = design.rootComponent
+        # create new component from root
+        sensor_component = design.rootComponent.occurrences.addNewComponent(adsk.core.Matrix3D.create()).component
+        sensor_component.name = "STGC Sensor"
 
         # TODO plane is need to be selectable by user
         # sel = ui.selectEntity('Select a path to create a pipe', 'Edges,SketchCurves')
         # selObj = sel.entity
-        plane_xy = root.xYConstructionPlane
+        plane_xy = sensor_component.xYConstructionPlane
 
-        produce_slots(root, plane_xy, user_params)
-        produce_ports(root, plane_xy, user_params)
+        produce_slots(sensor_component, plane_xy, user_params)
+        produce_ports(sensor_component, plane_xy, user_params)
 
     except:
         if ui:
