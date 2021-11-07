@@ -49,7 +49,7 @@ class UserParameters:
         # TODO these variables are not in Fusion document for now
         self.bits_pattern_string = '000000000000111000000110000001111111111111000111111001111110'
         self.heads_distance_bits = 5
-        self.heads_count = 5
+        self.heads_count = 6
         self.bits_pattern = list(map(int, self.bits_pattern_string))
         self.bit_length_angle = (2 * math.pi) / len(self.bits_pattern)
         assert sorted(set(self.bits_pattern)) == [0, 1], 'Pattern contains wrong characters'
